@@ -2174,7 +2174,7 @@ function saveAdminSession(session){ localStorage.setItem(ADMIN_SESSION_STORAGE_K
 function clearAdminSession(){ localStorage.removeItem(ADMIN_SESSION_STORAGE_KEY); }
 function isAdminAuthenticated(){ const s=getAdminSession(); return !!(s && s.access_token && (!s.expires_at || Date.now() < s.expires_at * 1000)); }
 function adminAuthHeaders(extra = {}){ const s=getAdminSession(); return supabaseHeaders({ Authorization: `Bearer ${s?.access_token || SUPABASE_ANON_KEY}`, ...extra }); }
-async function signInAdmin(email,password){ const r=await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`,{method:'POST',headers:supabaseHeaders(),body:JSON.stringify({email,password})}); const payload=await r.json().catch(()=>({})); if(!r.ok) throw new Error(payload.error_description || payload.msg || 'Falha no login'); saveAdminSession(payload); return payload; }
+async function signInAdmin(email,password){ const r=await fetch(`${getSupabaseUrl()}/auth/v1/token?grant_type=password`,{method:'POST',headers:supabaseHeaders(),body:JSON.stringify({email,password})}); const payload=await r.json().catch(()=>({})); if(!r.ok) throw new Error(payload.error_description || payload.msg || 'Falha no login'); saveAdminSession(payload); return payload; }
 async function readRemoteAdminState(){ return null; }
 async function writeRemoteAdminState(){ return null; }
 async function syncAdminStateFromRemote(){ adminStateLoaded = true; }
@@ -2218,14 +2218,16 @@ function logoutAdmin(){clearAdminSession();updateAdminAccessUI();closeAdminPanel
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const today=new Date();today.setHours(0,0,0,0);
 const STORAGE_KEY = 'corte_fino_bookings_v3';
-const SUPABASE_URL = 'sb_publishable_qi8BNDkMLbK7qW50VpeR1A_XUrFehOG';
+const SUPABASE_URL = 'https://rwizrvzemlqioirxdxqg.supabase.co/rest/v1/';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ3aXpydnplbWxxaW9pcnhkeHFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5NTk2NDEsImV4cCI6MjA5NDUzNTY0MX0.j531O0MTI7D-tJfrnv7a5d9ADNokqcUwZHKmPq0wq1k';
 const SUPABASE_BOOKINGS_TABLE = 'bookings';
 let bookings = {};
 let storageReady = false;
 function todayStr(){return new Date().toISOString().slice(0,10);}
+function getSupabaseUrl(){return String(SUPABASE_URL||'').trim().replace(/\/+$/,'');}
+function isSupabaseUrl(value){return /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(String(value||'').trim());}
 function supabaseHeaders(extra={}){return {apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${SUPABASE_ANON_KEY}`,'Content-Type':'application/json',...extra};}
-function hasSupabaseConfig(){return /^https:\/\/.+\.supabase\.co$/i.test(SUPABASE_URL||'') && !!SUPABASE_ANON_KEY;}
+function hasSupabaseConfig(){return isSupabaseUrl(getSupabaseUrl()) && /^eyJ/.test(SUPABASE_ANON_KEY||'');}
 function setSyncStatus(state,text){const t=document.getElementById('syncText');const d=document.getElementById('syncDot');if(t)t.textContent=text||'';if(d)d.className=`sync-dot ${state||''}`;}
 function readLocalBookings(){try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');}catch(e){return {};}}
 function writeLocalBookings(data){localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}
@@ -2241,13 +2243,13 @@ function bookingsFromRows(rows){
   return data;
 }
 async function readSupabaseBookings(){
-  const url = `${SUPABASE_URL}/rest/v1/${SUPABASE_BOOKINGS_TABLE}?select=booking_date,slot,name,phone,service,created_at&booking_date=gte.${todayStr()}&order=booking_date.asc,slot.asc`;
+  const url = `${getSupabaseUrl()}/rest/v1/${SUPABASE_BOOKINGS_TABLE}?select=booking_date,slot,name,phone,service,created_at&booking_date=gte.${todayStr()}&order=booking_date.asc,slot.asc`;
   const r = await fetch(url,{headers:supabaseHeaders()});
   if(!r.ok) throw new Error('Falha ao ler Supabase');
   return bookingsFromRows(await r.json());
 }
 async function insertSupabaseBooking(dateStr,slot,data){
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_BOOKINGS_TABLE}`,{
+  const r = await fetch(`${getSupabaseUrl()}/rest/v1/${SUPABASE_BOOKINGS_TABLE}`,{
     method:'POST',
     headers:supabaseHeaders({Prefer:'return=minimal'}),
     body:JSON.stringify({booking_date:dateStr,slot,name:data.name||'',phone:data.phone||'',service:data.service||''})
@@ -2257,14 +2259,17 @@ async function insertSupabaseBooking(dateStr,slot,data){
   return {ok:true};
 }
 async function readStoredBookings(){
-  if(!hasSupabaseConfig()) return readLocalBookings();
+  if(!hasSupabaseConfig()){
+    setSyncStatus('offline','Configure Project URL do Supabase');
+    return readLocalBookings();
+  }
   try{
     setSyncStatus('syncing','Sincronizando Supabase');
     const remote = await readSupabaseBookings();
     writeLocalBookings(remote);
     return remote;
   }catch(e){
-    setSyncStatus('offline','Usando modo local');
+    setSyncStatus('offline','Supabase indisponível');
     return readLocalBookings();
   }
 }
@@ -2281,7 +2286,8 @@ async function reserveBooking(dateStr,slot,data){
       const result = await insertSupabaseBooking(dateStr,slot,data);
       if(!result.ok) return result;
     }catch(e){
-      setSyncStatus('offline','Salvando localmente');
+      setSyncStatus('offline','Erro no Supabase');
+      return {ok:false,error:e};
     }
   }
   if(!bookings[dateStr])bookings[dateStr]={};
