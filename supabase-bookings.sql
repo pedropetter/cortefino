@@ -13,12 +13,18 @@ on public.bookings (booking_date, slot);
 
 alter table public.bookings enable row level security;
 
+grant usage on schema public to anon;
+grant select, insert on public.bookings to anon;
+grant usage, select on sequence public.bookings_id_seq to anon;
+
+drop policy if exists "public_can_read_bookings" on public.bookings;
 create policy "public_can_read_bookings"
 on public.bookings
 for select
 to anon
 using (true);
 
+drop policy if exists "public_can_insert_bookings" on public.bookings;
 create policy "public_can_insert_bookings"
 on public.bookings
 for insert
